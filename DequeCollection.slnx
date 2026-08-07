@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="DequeCollection.Console/DequeCollection.Console.csproj" />
+  <Project Path="DequeCollection.Tests/DequeCollection.Tests.csproj" />
+</Solution>
