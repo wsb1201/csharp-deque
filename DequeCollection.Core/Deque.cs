@@ -1,163 +1,286 @@
-﻿using System.Diagnostics;
+﻿namespace DequeCollection.Core;
 
-namespace DequeCollection.Core;
+using System.Collections;
+using System.Diagnostics;
 
-public partial class Deque<T>
+public class Deque<T> : IEnumerable<T>
 {
-	private T?[] _data = [];
-	private int _head;
+	private readonly RingBuffer<T> _ring;
+	private int _version;
 
-	public int Count { get; private set; }
-	public int Capacity => _data.Length;
-}
+	// Creates an empty Deque.
+	public Deque() => _ring = new(capacity: 0);
 
-public partial class Deque<T>
-{
-	public T this[int idx]
+	// Creates an empty Deque with space for at least capacity elements.
+	public Deque(int capacity) => _ring = new(capacity);
+
+	// Fills a new Deque<T> with the elements of another Deque<T>.
+	public Deque(Deque<T> source)
+		: this(source._ring.TrustedEnumerator(), sizeHint: source.Count) { }
+
+	// Fills a new Deque<T> with the elements of an ICollection<T>.
+	// Uses the enumerator to get each of the elements.
+	public Deque(ICollection<T> source)
+		: this(source.AsEnumerable(), sizeHint: source.Count) { }
+
+	// Fills a new Deque<T> with the elements of an IEnumerable<T>.
+	public Deque(IEnumerable<T> source, int sizeHint = 0)
+		: this(sizeHint)
 	{
-		get => _data[WrapAdd(IndexRangeAssert(idx))]!;
-		set => _data[WrapAdd(IndexRangeAssert(idx))] = value;
+		foreach (var item in source)
+			PushBack(item);
 	}
 
-	private int IndexRangeAssert(int idx) =>
-		(idx >= 0 && idx < Count) ? idx : throw new IndexOutOfRangeException();
-
-	/// Returns `true` if the deque is at full capacity.
-	public bool IsFull() => Count == Capacity;
-
-	/// Returns `true` if the deque is empty.
-	public bool IsEmpty() => Count == 0;
-
-	/// Returns `true` if the deque is contiguous.
-	public bool IsContiguous() => _head + Count <= Capacity;
-}
-
-public partial class Deque<T>
-{
-	/// Appends an element to the deque.
-	public void PushBack(T value)
+	public T this[int index]
 	{
-		if (IsFull())
-			Grow();
+		get => _ring[_ring.GetIndex(index)];
+		set => _ring[_ring.GetIndex(index)] = value;
+	}
 
-		var len = Count++;
-		_data[WrapAdd(len)] = value;
+	// Returns the number of elements contained in the Deque<T>.
+	public int Count => _ring.Count;
+
+	// Returns the number of elements the Deque<T> can hold without reallocating.
+	public int Capacity => _ring.Capacity;
+
+	// Returns a value indicating whether the Deque<T> is at full capacity.
+	public bool IsFull => _ring.IsFull();
+
+	// Returns a value indicating whether the Deque<T> is empty.
+	public bool IsEmpty => Count == 0;
+
+	// Returns a value indicating whether the Deque<T> is contiguous in memory.
+	public bool IsContiguous => _ring.IsContiguous();
+
+	// Returns a pair of spans which contain, in order, the contents of the Deque<T>.
+	public Slices<T> AsSlices() => AsSlices(..);
+
+	public Slices<T> AsSlices(Range range)
+	{
+		var (front, back) = _ring.SegmentRanges(range);
+		return new(_ring.Buffer.AsSpan(front), _ring.Buffer.AsSpan(back));
+	}
+
+	// Reserves space for at least the given number of additional elements.
+	public void Reserve(int additional)
+	{
+		_ring.Reserve(additional, exact: false);
+		_version++;
+	}
+
+	// Reserves space for exactly the given number of additional elements.
+	// Prefer reserve if future insertions are expected.
+	public void ReserveExact(int additional)
+	{
+		_ring.Reserve(additional, exact: true);
+		_version++;
+	}
+
+	// Removes all elements from the Deque<T>.
+	public void Clear()
+	{
+		var (front, back) = AsSlices();
+		front.Clear();
+		back.Clear();
+		_ring.Count = 0;
+		_ring.Head = new(0);
+		_version++;
+	}
+
+	// CopyTo copies the elements of the deque into an array, starting at a
+	// particular index into the array.
+	public void CopyTo(T[] array, int index)
+	{
+		var (front, back) = AsSlices();
+		var dest = array.AsSpan(index, _ring.Count);
+		front.CopyTo(dest[..front.Length]);
+		back.CopyTo(dest.Slice(front.Length, back.Length));
+	}
+
+	// Returns an array of the elements in the Deque<T>, or an empty array if the Deque<T> is empty.
+	public T[] ToArray() => ToArray(..);
+
+	// Returns an array of the elements within the given range of the Deque<T>,
+	// or an empty array if either the Deque<T> or the range is empty.
+	public T[] ToArray(Range range)
+	{
+		var slices = AsSlices(range);
+		var array = new T[slices.Length];
+		slices.Front.CopyTo(array.AsSpan(0, slices.Front.Length));
+		slices.Back.CopyTo(array.AsSpan(slices.Front.Length, slices.Back.Length));
+		return array;
 	}
 
 	/// Prepends an element to the deque.
 	public void PushFront(T value)
 	{
-		if (IsFull())
-			Grow();
+		_ring.GrowOneAmortized();
+		_ring.Count++;
+		_ring.Head = _ring.WrapIndex(unchecked(_ring.Head.Index - 1 + _ring.Capacity));
+		_ring[_ring.Head] = value;
+		_version++;
+	}
 
-		_head = WrapSub(1);
-		Count++;
-		_data[_head] = value;
+	/// Appends an element to the deque.
+	public void PushBack(T value)
+	{
+		_ring.GrowOneAmortized();
+		var count = _ring.Count++;
+		var index = _ring.WrapIndex(unchecked(_ring.Head.Index + count));
+		_ring[index] = value;
+		_version++;
 	}
 
 	/// Removes the first element and returns it. Throws
 	/// InvalidOperationException if the deque is empty.
-	public T PopFront() => TryPopFront(out T value) ? value : throw new InvalidOperationException();
+	public T PopFront()
+	{
+		_ring.AssertNotEmpty();
+		var index = _ring.Head;
+		_ring.Head = _ring.WrapIndex(unchecked(_ring.Head.Index + 1));
+		_ring.Count--;
+		Debug.Assert(_ring.Count < _ring.Capacity);
+
+		var value = _ring[index];
+		_ring[index] = default!;
+		_version++;
+		return value;
+	}
 
 	/// Removes the last element and returns it. Throws
 	/// InvalidOperationException if the deque is empty.
-	public T PopBack() => TryPopBack(out T value) ? value : throw new InvalidOperationException();
+	public T PopBack()
+	{
+		_ring.AssertNotEmpty();
+		_ring.Count--;
+		Debug.Assert(_ring.Count < _ring.Capacity);
+		var index = _ring.WrapIndex(unchecked(_ring.Head.Index + _ring.Count));
+
+		var value = _ring[index];
+		_ring[index] = default!;
+		_version++;
+		return value;
+	}
+
+	/// Returns the first element without removing it from the deque.
+	/// Throws InvalidOperationException if the deque is empty.
+	public T PeekFront()
+	{
+		_ring.AssertNotEmpty();
+		return _ring[_ring.FrontIndex()];
+	}
+
+	/// Returns the last element without removing it from the deque.
+	/// Throws InvalidOperationException if the deque is empty.
+	public T PeekBack()
+	{
+		_ring.AssertNotEmpty();
+		return _ring[_ring.BackIndex()];
+	}
 
 	public bool TryPopFront(out T value)
 	{
-		if (IsEmpty())
+		if (IsEmpty)
 		{
 			value = default!;
 			return false;
 		}
-
-		Debug.Assert(Count <= Capacity);
-		var oldHead = _head;
-		_head = WrapAdd(1);
-		Count--;
-		value = _data[oldHead]!;
-		_data[oldHead] = default;
-		return true;
+		else
+		{
+			value = PopFront();
+			return true;
+		}
 	}
 
 	public bool TryPopBack(out T value)
 	{
-		if (IsEmpty())
+		if (IsEmpty)
 		{
 			value = default!;
 			return false;
 		}
+		else
+		{
+			value = PopBack();
+			return true;
+		}
+	}
 
-		Debug.Assert(Count <= Capacity);
-		var idx = WrapAdd(--Count);
-		value = _data[idx]!;
-		_data[idx] = default;
-		return true;
+	// Returns true if the Deque contains an element equal to the given item.
+	// Equality is determined using the default equality comparer.
+	public bool Contains(T item) => Enumerable.Contains(_ring.TrustedEnumerator(), item);
+
+	// Returns true if the Deque contains an element equal to the given item.
+	public bool Contains(T item, IEqualityComparer<T>? comparer) =>
+		Enumerable.Contains(_ring.TrustedEnumerator(), item, comparer);
+
+	public IEnumerator<T> GetEnumerator() => new Enumerator(this);
+
+	IEnumerator IEnumerable.GetEnumerator() => new Enumerator(this);
+
+	private sealed class Enumerator(Deque<T> q) : IEnumerator<T>
+	{
+		private IEnumerator<T>? _inner = null;
+		private bool finished = false;
+		private readonly int _version = q._version;
+
+		private void AssertUnchanged()
+		{
+			if (_version != q._version)
+				throw new InvalidOperationException(
+					"Deque was modified; enumeration operation may not execute."
+				);
+		}
+
+		object IEnumerator.Current => Current!;
+
+		public T Current =>
+			finished ? throw new InvalidOperationException("Enumeration already finished.")
+			: _inner != null ? _inner.Current
+			: throw new InvalidOperationException("Enumeration has not started. Call MoveNext.");
+
+		bool IEnumerator.MoveNext()
+		{
+			AssertUnchanged();
+			_inner ??= q._ring.TrustedEnumerator().GetEnumerator();
+			finished = finished || !_inner.MoveNext();
+			return !finished;
+		}
+
+		void IEnumerator.Reset()
+		{
+			AssertUnchanged();
+			_inner = null;
+			finished = false;
+		}
+
+		public void Dispose() { }
 	}
 }
 
-partial class Deque<T>
+public readonly ref struct Slices<T>
 {
-	private int WrapAdd(int add) => WrapIndex(_head + add);
+	public readonly Span<T> Front { get; internal init; }
+	public readonly Span<T> Back { get; internal init; }
 
-	private int WrapSub(int sub) => WrapIndex(_head - sub + Capacity);
+	public readonly int Length => checked(Front.Length + Back.Length);
 
-	/// Returns the index in the underlying buffer for a given logical element index.
-	private int WrapIndex(int idx)
+	// Returns a value that indicates whether the slices are empty.
+	public readonly bool IsEmpty => Front.IsEmpty;
+
+	// Returns a value that indicates whether the back slice is empty.
+	public readonly bool IsContiguous => Back.IsEmpty;
+
+	public void Deconstruct(out Span<T> front, out Span<T> back)
 	{
-		Debug.Assert((idx == 0 && Capacity == 0) || idx < Capacity || (idx - Capacity) < Capacity);
-		return (idx >= Capacity) ? idx - Capacity : idx;
+		front = Front;
+		back = Back;
 	}
 
-	// Double the ring buffer size.
-	private void Grow()
+	internal Slices(Span<T> front, Span<T> back)
 	{
-		if (!IsFull())
-			return;
-		else if (Capacity >= 1 << 30) // overflow guard
-			throw new OutOfMemoryException();
-
-		var oldCapacity = Capacity;
-		var newCapacity = int.Max(4, oldCapacity << 1);
-		Debug.Assert(newCapacity >= oldCapacity);
-
-		// !! call before `_data` is updated !!
-		var contiguous = IsContiguous();
-
-		var old = _data;
-		_data = new T[newCapacity];
-
-		if (Count > 0)
-		{
-			void MoveToNew(int src, int dst, int count)
-			{
-				Debug.Assert(src + count <= oldCapacity);
-				Debug.Assert(dst + count <= newCapacity);
-				Array.Copy(old, src, _data, dst, count);
-			}
-
-			if (contiguous)
-			{
-				MoveToNew(_head, _head, Count);
-			}
-			else
-			{ // Move the shortest contiguous section of the ring buffer.
-				var headCount = oldCapacity - _head;
-				var tailCount = Count - headCount;
-				if (headCount > tailCount && newCapacity - oldCapacity >= tailCount)
-				{
-					MoveToNew(0, oldCapacity, tailCount);
-				}
-				else
-				{
-					var newHead = newCapacity - headCount;
-					MoveToNew(_head, newHead, headCount);
-					_head = newHead;
-				}
-			}
-		}
-
-		Debug.Assert(_head < Capacity || Capacity == 0);
-		Debug.Assert(!IsFull());
+		Debug.Assert(!front.IsEmpty || back.IsEmpty);
+		Front = front;
+		Back = back;
 	}
 }

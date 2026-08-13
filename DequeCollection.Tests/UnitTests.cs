@@ -2,10 +2,10 @@
 
 namespace DequeCollection.Tests;
 
-public class UnitTest1
+public sealed class UnitTests
 {
 	[Fact]
-	public void Test_Deque_PushPopFront()
+	public void Test_Deque_PushPop()
 	{
 		var deq = new Deque<int>();
 
@@ -16,12 +16,6 @@ public class UnitTest1
 		Assert.Equal(3, deq.PopFront());
 		Assert.Equal(2, deq.PopFront());
 		Assert.Equal(1, deq.PopFront());
-	}
-
-	[Fact]
-	public void Test_Deque_PushPopBack()
-	{
-		var deq = new Deque<int>();
 
 		deq.PushBack(1);
 		deq.PushBack(2);
