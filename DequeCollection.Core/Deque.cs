@@ -3,7 +3,8 @@
 using System.Collections;
 using System.Diagnostics;
 
-public class Deque<T> : IEnumerable<T>
+// A double-ended queue implemented with a growable ring buffer.
+public class Deque<T> : IDeque<T>
 {
 	private readonly RingBuffer<T> _ring;
 	private int _version;
@@ -111,7 +112,7 @@ public class Deque<T> : IEnumerable<T>
 		return array;
 	}
 
-	/// Prepends an element to the deque.
+	// Prepends an element to the deque.
 	public void PushFront(T value)
 	{
 		_ring.GrowOneAmortized();
@@ -121,7 +122,7 @@ public class Deque<T> : IEnumerable<T>
 		_version++;
 	}
 
-	/// Appends an element to the deque.
+	// Appends an element to the deque.
 	public void PushBack(T value)
 	{
 		_ring.GrowOneAmortized();
@@ -131,8 +132,8 @@ public class Deque<T> : IEnumerable<T>
 		_version++;
 	}
 
-	/// Removes the first element and returns it. Throws
-	/// InvalidOperationException if the deque is empty.
+	// Removes the first element and returns it. Throws
+	// InvalidOperationException if the deque is empty.
 	public T PopFront()
 	{
 		_ring.AssertNotEmpty();
@@ -147,8 +148,8 @@ public class Deque<T> : IEnumerable<T>
 		return value;
 	}
 
-	/// Removes the last element and returns it. Throws
-	/// InvalidOperationException if the deque is empty.
+	// Removes the last element and returns it. Throws
+	// InvalidOperationException if the deque is empty.
 	public T PopBack()
 	{
 		_ring.AssertNotEmpty();
@@ -162,16 +163,16 @@ public class Deque<T> : IEnumerable<T>
 		return value;
 	}
 
-	/// Returns the first element without removing it from the deque.
-	/// Throws InvalidOperationException if the deque is empty.
+	// Returns the first element without removing it from the deque.
+	// Throws InvalidOperationException if the deque is empty.
 	public T PeekFront()
 	{
 		_ring.AssertNotEmpty();
 		return _ring[_ring.FrontIndex()];
 	}
 
-	/// Returns the last element without removing it from the deque.
-	/// Throws InvalidOperationException if the deque is empty.
+	// Returns the last element without removing it from the deque.
+	// Throws InvalidOperationException if the deque is empty.
 	public T PeekBack()
 	{
 		_ring.AssertNotEmpty();
