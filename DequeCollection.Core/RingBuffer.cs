@@ -1,4 +1,4 @@
-namespace DequeCollection.Core;
+﻿namespace DequeCollection.Core;
 
 using System.Diagnostics;
 
@@ -144,7 +144,7 @@ internal sealed class RingBuffer<T>
 	// Deque must not be modified while the enumerator is in use.
 	internal IEnumerable<T> TrustedEnumerator()
 	{
-		for (var (index, count) = (_head.Index, _count); count-- > 0; index++)
+		for (var index = 0; index < _count; index++)
 			yield return this[GetIndex(index)];
 	}
 
