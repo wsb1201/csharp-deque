@@ -102,7 +102,7 @@ public class Deque<T> : IDeque<T>
 	public T[] ToArray() => ToArray(..);
 
 	// Returns an array of the elements within the given range of the Deque<T>,
-	// or an empty array if either the Deque<T> or the range is empty.
+	// or an empty array if the range is empty.
 	public T[] ToArray(Range range)
 	{
 		var slices = AsSlices(range);
