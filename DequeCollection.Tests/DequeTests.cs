@@ -80,7 +80,7 @@ public sealed class DequeTests
 	}
 
 	[Fact]
-	public void PushBack_PopFront_FIFO()
+	public void PushFront_PopBack_FIFO()
 	{
 		// Given
 		var d = new Deque<int>();
