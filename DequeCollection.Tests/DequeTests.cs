@@ -438,7 +438,7 @@ public sealed class DequeTests
 			d.PushBack(x);
 
 		// Then
-		Assert.Equal([3, 1, 4, 1, 5], [.. d]);
+		Assert.Equal([3, 1, 4, 1, 5], d.ToArray());
 	}
 
 	[Theory]
